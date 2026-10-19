@@ -116,12 +116,10 @@ curl 'https://api.example.com/api/v1/token' \
 
 | 下单客户端 | `account_id` 的含义 |
 | --- | --- |
-| HIBT 下单程序（包括 Open Event Desktop） | HIBT 账号 UID |
-| 币安下单程序 | 币安账号 UID |
+| HIBT 下单程序（ Open Event Desktop） | HIBT 账号 UID |
+| 币安下单程序（ Open-Hsaord ） | 币安账号 UID |
 
 服务方签发 Token 时，应与客户端约定 UID 所属的账号体系。客户端不应根据 UID 的数字格式猜测平台，也不应将不同平台的 UID 混用。接口字段名仍为 `account_id`，无需增加平台前缀或修改请求格式。
-
-此账号绑定说明不改变数据范围：预测、推单和订单历史仍为全服务器共享数据，不按 `account_id` 筛选。
 
 **响应示例**
 
@@ -185,7 +183,6 @@ curl 'https://api.example.com/api/v1/predict' \
 
 - 暂无方向预测时，仍返回对象及有效现价，`direction` 和 `confidence` 同时为 null。
 - 无法提供完整预测对象或有效现价时返回 `500 SERVER_ERROR`，不以 `predict=null` 或无效价格代替。
-- 行情更新修改 `price`、`price_time_ms`；查询不刷新行情时间。公开预测对象不包含预测更新时间。
 - 预测与订单是独立数据，预测更新不创建订单记录。
 
 ### 获取推单
@@ -243,8 +240,7 @@ result = PENDING
 ```
 
 - 使用同一快照的服务器时间与订单数据筛选，排除未来、达到或超过最大年龄、已验证的订单。
-- 筛选使用服务端保存的 `result`，推单对象只返回下单所需字段，不返回 `result`、`confidence`、`open_price` 或 `close_price`。
-- 按 `time_ms` 降序、同时间 `id` 降序返回全部匹配记录，无 `page`、`page_size`、`total` 字段，不截断数量。
+- 按 `time_ms` 降序、同时间 `id` 降序返回全部匹配记录 (方便客户端优先执行最近订单)，无 `page`、`page_size`、`total` 字段，不截断数量。
 - 无匹配记录时仍返回 HTTP `200`、`server_time_ms` 和空数组。
 - GET 不消费订单，连续查询可能返回同一条订单；身份与去重标识见[订单标识与状态](#订单标识与状态)。
 
@@ -354,7 +350,7 @@ curl 'https://api.example.com/api/v1/orders?filter=all&page=1&page_size=20' \
 | `duration_sec` | integer | 是 | 合约时长，单位秒，见公共字段取值 |
 | `direction` | string | 是 | 订单方向，见公共字段取值 |
 | `time_ms` | integer | 是 | 原始创建时间，创建后不变；用于订单年龄判断与身份识别 |
-| `payout_rate` | number | 否 | 支付率比例，范围 `0 < 值 <= 1`；省略时按下文约定处理 |
+| `payout_rate` | number | 否 | 支付率比例，范围 `0 < 值 <= 1`；省略时下单软件按下文约定处理 |
 
 ### 历史订单对象
 
@@ -369,11 +365,11 @@ curl 'https://api.example.com/api/v1/orders?filter=all&page=1&page_size=20' \
 | `confidence` | number | 是 | 决策时的方向置信度，范围 `0–1` |
 | `time_ms` | integer | 是 | 原始创建时间，创建后不变 |
 | `result` | string | 是 | 服务端验证的方向结果，见公共字段取值 |
-| `payout_rate` | number | 否 | 支付率比例，范围 `0 < 值 <= 1`；`0.85` 表示 85%，省略时按下文约定处理 |
+| `payout_rate` | number | 否 | 支付率比例，范围 `0 < 值 <= 1`；`0.85` 表示 85%，省略时下单软件按下文约定处理 |
 | `open_price` | string 或 null | 是 | 创建决策时的开仓参考价，未知为 null |
 | `close_price` | string 或 null | 是 | 合约周期结束时的平仓参考价，尚未取得为 null |
 
-推单对象与历史订单对象的 `payout_rate` 使用相同约定。存在时必须为有效数值；null、字符串、百分数 `85` 及范围外值均无效。仅省略字段时，已有周期采用下列默认值；新增的 3、5、15 分钟周期不预设参考支付率，未提供时按未知处理：
+推单对象与历史订单对象的 `payout_rate` 使用相同约定。存在时必须为有效数值；null、字符串、百分数 `85` 及范围外值均无效。已有周期采用下列默认值：
 
 | `duration_sec` | 周期 | 默认支付率 |
 | --- | --- | --- |
@@ -385,14 +381,13 @@ curl 'https://api.example.com/api/v1/orders?filter=all&page=1&page_size=20' \
 | `3600` | 1 小时 | `0.85` |
 | `86400` | 1 天 | `0.85` |
 
-客户端能取得平台实际订单支付率时，应以平台实际值为准；
-
+若客户端能取得平台实际订单支付率时，将实际值为准；
 订单周期结束时间为 `time_ms + duration_sec × 1000`。开平仓参考价是订单快照，不随实时行情变化；补写参考价或验证结果不改变订单标识和创建时间，其余决策字段创建后保持不变。
 
 ### 订单标识与状态
 
 - **数据范围**：预测、推单及订单历史为全服务器共享数据，不按 Token 绑定账号筛选。
-- **订单标识**：同一服务器内，由 `id + 原始 time_ms` 组合识别订单；ID 本身不要求唯一，相同 ID、不同时间戳可表示不同订单。同一响应内相同组合不得重复。
+- **订单标识**：同一服务器内，客户端将由 `id + 原始 time_ms` 组合识别订单；ID 本身不要求唯一，相同 ID、不同时间戳可表示不同订单。同一响应内相同组合不得重复。
 - **查询语义**：GET 不消费、占用或删除订单，不修改创建时间，不确认实际成交，也不改变验证结果。
 - **状态语义**：`PENDING` 表示方向尚未验证，与是否实际成交无关。超过推单时间窗口只影响是否被该查询返回，不会自动将结果改为 `WRONG`。
 
